@@ -357,20 +357,7 @@ public class JobCreateCommand extends ControlCommand {
     // Merge job configuration options from command line arguments
 
     if (id != null) {
-      final String[] parts = id.split(":");
-      switch (parts.length) {
-        case 3:
-          builder.setHash(parts[2]);
-          // fall through
-        case 2:
-          builder.setVersion(parts[1]);
-          // fall through
-        case 1:
-          builder.setName(parts[0]);
-          break;
-        default:
-          throw new IllegalArgumentException("Invalid Job id: " + id);
-      }
+      parseJobId(builder, id);
     }
 
     if (imageIdentifier != null) {
@@ -468,24 +455,7 @@ public class JobCreateCommand extends ControlCommand {
     }
 
     // Parse volumes
-    final List<String> volumeSpecs = options.getList(volumeArg.getDest());
-    for (final String spec : volumeSpecs) {
-      final String[] parts = spec.split(":", 2);
-      switch (parts.length) {
-        // Data volume
-        case 1:
-          builder.addVolume(parts[0]);
-          break;
-        // Bind mount
-        case 2:
-          final String path = parts[1];
-          final String source = parts[0];
-          builder.addVolume(path, source);
-          break;
-        default:
-          throw new IllegalArgumentException("Invalid volume: " + spec);
-      }
-    }
+    parseVolumes(options, builder);
 
     // Parse expires timestamp
     final String expires = options.getString(expiresArg.getDest());
@@ -495,38 +465,7 @@ public class JobCreateCommand extends ControlCommand {
     }
 
     // Parse health check
-    final String execString = options.getString(healthCheckExecArg.getDest());
-    final List<String> execHealthCheck =
-        (execString == null) ? null : Arrays.asList(execString.split(" "));
-    final String httpHealthCheck = options.getString(healthCheckHttpArg.getDest());
-    final String tcpHealthCheck = options.getString(healthCheckTcpArg.getDest());
-
-    int numberOfHealthChecks = 0;
-    for (final String c : asList(httpHealthCheck, tcpHealthCheck)) {
-      if (!isNullOrEmpty(c)) {
-        numberOfHealthChecks++;
-      }
-    }
-    if (execHealthCheck != null && !execHealthCheck.isEmpty()) {
-      numberOfHealthChecks++;
-    }
-
-    if (numberOfHealthChecks > 1) {
-      throw new IllegalArgumentException("Only one health check may be specified.");
-    }
-
-    if (execHealthCheck != null && !execHealthCheck.isEmpty()) {
-      builder.setHealthCheck(ExecHealthCheck.of(execHealthCheck));
-    } else if (!isNullOrEmpty(httpHealthCheck)) {
-      final String[] parts = httpHealthCheck.split(":", 2);
-      if (parts.length != 2) {
-        throw new IllegalArgumentException("Invalid HTTP health check: " + httpHealthCheck);
-      }
-
-      builder.setHealthCheck(HttpHealthCheck.of(parts[0], parts[1]));
-    } else if (!isNullOrEmpty(tcpHealthCheck)) {
-      builder.setHealthCheck(TcpHealthCheck.of(tcpHealthCheck));
-    }
+    parseHealthChecks(options, builder);
 
     final List<String> securityOpt = options.getList(securityOptArg.getDest());
     if (securityOpt != null && !securityOpt.isEmpty()) {
@@ -611,6 +550,79 @@ public class JobCreateCommand extends ControlCommand {
         out.println(status.toJsonString());
       }
       return 1;
+    }
+  }
+
+  private void parseHealthChecks(Namespace options, Job.Builder builder) {
+    final String execString = options.getString(healthCheckExecArg.getDest());
+    final List<String> execHealthCheck =
+        (execString == null) ? null : Arrays.asList(execString.split(" "));
+    final String httpHealthCheck = options.getString(healthCheckHttpArg.getDest());
+    final String tcpHealthCheck = options.getString(healthCheckTcpArg.getDest());
+
+    int numberOfHealthChecks = 0;
+    for (final String c : asList(httpHealthCheck, tcpHealthCheck)) {
+      if (!isNullOrEmpty(c)) {
+        numberOfHealthChecks++;
+      }
+    }
+    if (execHealthCheck != null && !execHealthCheck.isEmpty()) {
+      numberOfHealthChecks++;
+    }
+
+    if (numberOfHealthChecks > 1) {
+      throw new IllegalArgumentException("Only one health check may be specified.");
+    }
+
+    if (execHealthCheck != null && !execHealthCheck.isEmpty()) {
+      builder.setHealthCheck(ExecHealthCheck.of(execHealthCheck));
+    } else if (!isNullOrEmpty(httpHealthCheck)) {
+      final String[] parts = httpHealthCheck.split(":", 2);
+      if (parts.length != 2) {
+        throw new IllegalArgumentException("Invalid HTTP health check: " + httpHealthCheck);
+      }
+
+      builder.setHealthCheck(HttpHealthCheck.of(parts[0], parts[1]));
+    } else if (!isNullOrEmpty(tcpHealthCheck)) {
+      builder.setHealthCheck(TcpHealthCheck.of(tcpHealthCheck));
+    }
+  }
+
+  private void parseVolumes(Namespace options, Job.Builder builder) {
+    final List<String> volumeSpecs = options.getList(volumeArg.getDest());
+    for (final String spec : volumeSpecs) {
+      final String[] parts = spec.split(":", 2);
+      switch (parts.length) {
+        // Data volume
+        case 1:
+          builder.addVolume(parts[0]);
+          break;
+        // Bind mount
+        case 2:
+          final String path = parts[1];
+          final String source = parts[0];
+          builder.addVolume(path, source);
+          break;
+        default:
+          throw new IllegalArgumentException("Invalid volume: " + spec);
+      }
+    }
+  }
+
+  private void parseJobId(Job.Builder builder, String id) {
+    final String[] parts = id.split(":");
+    switch (parts.length) {
+      case 3:
+        builder.setHash(parts[2]);
+        // fall through
+      case 2:
+        builder.setVersion(parts[1]);
+        // fall through
+      case 1:
+        builder.setName(parts[0]);
+        break;
+      default:
+        throw new IllegalArgumentException("Invalid Job id: " + id);
     }
   }
 
