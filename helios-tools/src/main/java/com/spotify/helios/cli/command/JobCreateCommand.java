@@ -322,23 +322,8 @@ public class JobCreateCommand extends ControlCommand {
       builder = job.toBuilder();
     } else if (templateJobId != null) {
       final Map<JobId, Job> jobs = client.jobs(templateJobId).get();
-      if (jobs.size() == 0) {
-        if (!json) {
-          out.printf("Unknown job: %s%n", templateJobId);
-        } else {
-          final CreateJobResponse createJobResponse =
-              new CreateJobResponse(CreateJobResponse.Status.UNKNOWN_JOB, null, null);
-          out.print(createJobResponse.toJsonString());
-        }
-        return 1;
-      } else if (jobs.size() > 1) {
-        if (!json) {
-          out.printf("Ambiguous job reference: %s%n", templateJobId);
-        } else {
-          final CreateJobResponse createJobResponse =
-              new CreateJobResponse(CreateJobResponse.Status.AMBIGUOUS_JOB_REFERENCE, null, null);
-          out.print(createJobResponse.toJsonString());
-        }
+      if (jobs.size() != 1) {
+        printJobsError(out, json, templateJobId, jobs);
         return 1;
       }
       final Job template = Iterables.getOnlyElement(jobs.values());
@@ -374,18 +359,7 @@ public class JobCreateCommand extends ControlCommand {
       builder.setCommand(command);
     }
 
-    final List<String> envList = options.getList(envArg.getDest());
-    // TODO (mbrown): does this mean that env config is only added when there is a CLI flag too?
-    if (!envList.isEmpty()) {
-      final Map<String, String> env = Maps.newHashMap();
-      // Add environmental variables from helios job configuration file
-      env.putAll(builder.getEnv());
-      // Add environmental variables passed in via CLI
-      // Overwrite any redundant keys to make CLI args take precedence
-      env.putAll(parseListOfPairs(envList, "environment variable"));
-
-      builder.setEnv(env);
-    }
+    setupEnvironmentVariables(options, builder);
 
     final Map<String, String> metadata = Maps.newHashMap();
     metadata.putAll(defaultMetadata());
@@ -399,43 +373,11 @@ public class JobCreateCommand extends ControlCommand {
     final Map<String, PortMapping> explicitPorts = PortMappingParser.parsePortMappings(portSpecs);
 
     // Merge port mappings
-    final Map<String, PortMapping> ports = Maps.newHashMap();
-    ports.putAll(builder.getPorts());
-    ports.putAll(explicitPorts);
+    final Map<String, PortMapping> ports = mergeMaps(explicitPorts, builder.getPorts());
     builder.setPorts(ports);
 
     // Parse service registrations
-    final Map<ServiceEndpoint, ServicePorts> explicitRegistration = Maps.newHashMap();
-    final Pattern registrationPattern =
-        compile("(?<srv>[a-zA-Z][_\\-\\w]+)(?:/(?<prot>\\w+))?(?:=(?<port>[_\\-\\w]+))?");
-    final List<String> registrationSpecs = options.getList(registrationArg.getDest());
-    for (final String spec : registrationSpecs) {
-      final Matcher matcher = registrationPattern.matcher(spec);
-      if (!matcher.matches()) {
-        throw new IllegalArgumentException("Bad registration: " + spec);
-      }
-
-      final String service = matcher.group("srv");
-      final String proto = fromNullable(matcher.group("prot")).or(HTTP);
-      final String optionalPort = matcher.group("port");
-      final String port;
-
-      if (ports.size() == 0) {
-        throw new IllegalArgumentException("Need port mappings for service registration.");
-      }
-
-      if (optionalPort == null) {
-        if (ports.size() != 1) {
-          throw new IllegalArgumentException(
-              "Need exactly one port mapping for implicit service registration");
-        }
-        port = Iterables.getLast(ports.keySet());
-      } else {
-        port = optionalPort;
-      }
-
-      explicitRegistration.put(ServiceEndpoint.of(service, proto), ServicePorts.of(port));
-    }
+    final Map<ServiceEndpoint, ServicePorts> explicitRegistration = parseServiceRegistration(options, ports);
 
     final String registrationDomain = options.getString(registrationDomainArg.getDest());
     if (!isNullOrEmpty(registrationDomain)) {
@@ -550,6 +492,83 @@ public class JobCreateCommand extends ControlCommand {
         out.println(status.toJsonString());
       }
       return 1;
+    }
+  }
+
+  private Map<ServiceEndpoint, ServicePorts> parseServiceRegistration(Namespace options, Map<String, PortMapping> ports) {
+    final Map<ServiceEndpoint, ServicePorts> explicitRegistration = Maps.newHashMap();
+    final Pattern registrationPattern =
+        compile("(?<srv>[a-zA-Z][_\\-\\w]+)(?:/(?<prot>\\w+))?(?:=(?<port>[_\\-\\w]+))?");
+    final List<String> registrationSpecs = options.getList(registrationArg.getDest());
+    for (final String spec : registrationSpecs) {
+      final Matcher matcher = registrationPattern.matcher(spec);
+      if (!matcher.matches()) {
+        throw new IllegalArgumentException("Bad registration: " + spec);
+      }
+
+      final String service = matcher.group("srv");
+      final String proto = fromNullable(matcher.group("prot")).or(HTTP);
+      final String optionalPort = matcher.group("port");
+
+      if (ports.size() == 0) {
+        throw new IllegalArgumentException("Need port mappings for service registration.");
+      }
+
+      final String port;
+      if (optionalPort == null) {
+        if (ports.size() != 1) {
+          throw new IllegalArgumentException(
+              "Need exactly one port mapping for implicit service registration");
+        }
+        port = Iterables.getLast(ports.keySet());
+      } else {
+        port = optionalPort;
+      }
+
+      explicitRegistration.put(ServiceEndpoint.of(service, proto), ServicePorts.of(port));
+    }
+    return explicitRegistration;
+  }
+
+  private Map<String, PortMapping> mergeMaps(Map<String, PortMapping> explicitPorts, Map<String, PortMapping> defaultPorts) {
+    final Map<String, PortMapping> ports = Maps.newHashMap();
+    ports.putAll(defaultPorts);
+    ports.putAll(explicitPorts);
+    return ports;
+  }
+
+  private void setupEnvironmentVariables(Namespace options, Job.Builder builder) {
+    final List<String> envList = options.getList(envArg.getDest());
+    // TODO (mbrown): does this mean that env config is only added when there is a CLI flag too?
+    if (!envList.isEmpty()) {
+      final Map<String, String> env = Maps.newHashMap();
+      // Add environmental variables from helios job configuration file
+      env.putAll(builder.getEnv());
+      // Add environmental variables passed in via CLI
+      // Overwrite any redundant keys to make CLI args take precedence
+      env.putAll(parseListOfPairs(envList, "environment variable"));
+
+      builder.setEnv(env);
+    }
+  }
+
+  private void printJobsError(PrintStream out, boolean json, String templateJobId, Map<JobId, Job> jobs) {
+    if (jobs.size() == 0) {
+      if (!json) {
+        out.printf("Unknown job: %s%n", templateJobId);
+      } else {
+        final CreateJobResponse createJobResponse =
+              new CreateJobResponse(CreateJobResponse.Status.UNKNOWN_JOB, null, null);
+        out.print(createJobResponse.toJsonString());
+      }
+    } else {
+      if (!json) {
+        out.printf("Ambiguous job reference: %s%n", templateJobId);
+      } else {
+        final CreateJobResponse createJobResponse =
+              new CreateJobResponse(CreateJobResponse.Status.AMBIGUOUS_JOB_REFERENCE, null, null);
+        out.print(createJobResponse.toJsonString());
+      }
     }
   }
 
