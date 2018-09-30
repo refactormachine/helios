@@ -345,6 +345,55 @@ public class JobCreateCommand extends ControlCommand {
       parseJobId(builder, id);
     }
 
+    mergeJobConfigurationWIthCommandLineArgs(options, builder, imageIdentifier);
+
+    // We build without a hash here because we want the hash to be calculated server-side.
+    // This allows different CLI versions to be cross-compatible with different master versions
+    // that have either more or fewer job parameters.
+    final Job job = builder.buildWithoutHash();
+
+    final Collection<String> errors = JOB_VALIDATOR.validate(job);
+    if (!errors.isEmpty()) {
+      if (!json) {
+        for (final String error : errors) {
+          out.println(error);
+        }
+      } else {
+        final CreateJobResponse createJobResponse = new CreateJobResponse(
+            CreateJobResponse.Status.INVALID_JOB_DEFINITION, ImmutableList.copyOf(errors),
+            job.getId().toString());
+        out.println(createJobResponse.toJsonString());
+      }
+
+      return 1;
+    }
+
+    if (!quiet && !json) {
+      out.println("Creating job: " + job.toJsonString());
+    }
+
+    final CreateJobResponse status = client.createJob(job).get();
+    if (status.getStatus() == CreateJobResponse.Status.OK) {
+      if (!quiet && !json) {
+        out.println("Done.");
+      }
+      if (json) {
+        out.println(status.toJsonString());
+      } else {
+        out.println(status.getId());
+      }
+      return 0;
+    } else {
+      if (!quiet && !json) {
+        out.println("Failed: " + status);
+      } else if (json) {
+        out.println(status.toJsonString());
+      }
+      return 1;
+    }
+  }
+
+  private void mergeJobConfigurationWIthCommandLineArgs(Namespace options, Job.Builder builder, String imageIdentifier) {
     if (imageIdentifier != null) {
       builder.setImage(imageIdentifier);
     }
@@ -445,51 +494,6 @@ public class JobCreateCommand extends ControlCommand {
       rolloutOptionsMap.putAll(parseListOfPairs(rolloutOptionsList, "rollout_options"));
       final RolloutOptions rolloutOptions = Json.convert(rolloutOptionsMap, RolloutOptions.class);
       builder.setRolloutOptions(rolloutOptions);
-    }
-
-    // We build without a hash here because we want the hash to be calculated server-side.
-    // This allows different CLI versions to be cross-compatible with different master versions
-    // that have either more or fewer job parameters.
-    final Job job = builder.buildWithoutHash();
-
-    final Collection<String> errors = JOB_VALIDATOR.validate(job);
-    if (!errors.isEmpty()) {
-      if (!json) {
-        for (final String error : errors) {
-          out.println(error);
-        }
-      } else {
-        final CreateJobResponse createJobResponse = new CreateJobResponse(
-            CreateJobResponse.Status.INVALID_JOB_DEFINITION, ImmutableList.copyOf(errors),
-            job.getId().toString());
-        out.println(createJobResponse.toJsonString());
-      }
-
-      return 1;
-    }
-
-    if (!quiet && !json) {
-      out.println("Creating job: " + job.toJsonString());
-    }
-
-    final CreateJobResponse status = client.createJob(job).get();
-    if (status.getStatus() == CreateJobResponse.Status.OK) {
-      if (!quiet && !json) {
-        out.println("Done.");
-      }
-      if (json) {
-        out.println(status.toJsonString());
-      } else {
-        out.println(status.getId());
-      }
-      return 0;
-    } else {
-      if (!quiet && !json) {
-        out.println("Failed: " + status);
-      } else if (json) {
-        out.println(status.toJsonString());
-      }
-      return 1;
     }
   }
 
