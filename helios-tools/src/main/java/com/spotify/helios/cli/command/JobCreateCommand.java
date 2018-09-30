@@ -373,7 +373,7 @@ public class JobCreateCommand extends ControlCommand {
     final Map<String, PortMapping> explicitPorts = PortMappingParser.parsePortMappings(portSpecs);
 
     // Merge port mappings
-    final Map<String, PortMapping> ports = mergeMaps(explicitPorts, builder.getPorts());
+    final Map<String, PortMapping> ports = mergeMaps(builder.getPorts(), explicitPorts);
     builder.setPorts(ports);
 
     // Parse service registrations
@@ -385,9 +385,7 @@ public class JobCreateCommand extends ControlCommand {
     }
 
     // Merge service registrations
-    final Map<ServiceEndpoint, ServicePorts> registration = Maps.newHashMap();
-    registration.putAll(builder.getRegistration());
-    registration.putAll(explicitRegistration);
+    final Map<ServiceEndpoint, ServicePorts> registration = mergeMaps(builder.getRegistration(), explicitRegistration);
     builder.setRegistration(registration);
 
     // Get grace period interval
@@ -530,10 +528,10 @@ public class JobCreateCommand extends ControlCommand {
     return explicitRegistration;
   }
 
-  private Map<String, PortMapping> mergeMaps(Map<String, PortMapping> explicitPorts, Map<String, PortMapping> defaultPorts) {
-    final Map<String, PortMapping> ports = Maps.newHashMap();
-    ports.putAll(defaultPorts);
-    ports.putAll(explicitPorts);
+  private <K, V> Map<K, V> mergeMaps(Map<K, V> defaultValues, Map<K, V> prioritizedValues) {
+    final Map<K, V> ports = Maps.newHashMap();
+    ports.putAll(defaultValues);
+    ports.putAll(prioritizedValues);
     return ports;
   }
 
